@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.pipeline.policy import run_pipeline
 
 app = FastAPI(title="SentinelAI Moderation API", version="1.0.0")
@@ -19,6 +18,4 @@ def health():
 
 @app.post("/moderate")
 def moderate(payload: dict):
-    text = payload.get("text", "")
-    locale = payload.get("locale", "en")
-    return run_pipeline(text, locale)
+    return run_pipeline(payload.get("text", ""), payload.get("locale", "en"))
