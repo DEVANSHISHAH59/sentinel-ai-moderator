@@ -10,30 +10,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.pipeline.policy import run_pipeline  # noqa
 
 # -----------------------------
-# Helpers
-# -----------------------------
-def severity_label(score: float) -> str:
-    if score >= 0.80:
-        return "Critical"
-    if score >= 0.60:
-        return "High"
-    if score >= 0.35:
-        return "Medium"
-    if score > 0.0:
-        return "Low"
-    return "None"
-
-def badge_for_category(cat: str) -> str:
-    mapping = {
-        "scam_fraud": "💸 Scam / Fraud",
-        "sexual_content": "🔞 Sexual Content",
-        "child_safety": "🧒 Child Safety",
-        "hate_harassment": "🧨 Hate / Harassment",
-    }
-    return mapping.get(cat, cat)
-
-# -----------------------------
-# Page config
+# Page setup
 # -----------------------------
 st.set_page_config(
     page_title="SentinelAI — Content Safety Analyzer",
@@ -42,139 +19,132 @@ st.set_page_config(
 )
 
 st.title("🛡️ SentinelAI — Content Safety Analyzer")
+
 st.caption(
-    "Portfolio demo: paste a social media post (or use a demo example) to generate risk findings and trigger warnings."
+    "AI-powered trigger warning system for social media moderation. "
+    "Paste a post or try a real demo example below."
 )
 
 # -----------------------------
-# Sidebar: About + controls
+# Instagram Demo Section ⭐
 # -----------------------------
-with st.sidebar:
-    st.header("About")
-    st.write(
-        "- Hybrid-style moderation pipeline (rules + scoring)\n"
-        "- Generates trigger warnings + severity score\n"
-        "- Designed for social media safety demos\n"
+st.subheader("📱 Real Social Media Demo")
+
+INSTAGRAM_LINK = "https://www.instagram.com/reel/DVaFCuqDQEx/?igsh=cXphdTg5aTRlcDZm"
+
+st.markdown(
+    f"""
+🔗 **Demo Instagram Reel**
+
+👉 [Open Instagram Reel]({INSTAGRAM_LINK})
+
+This demo simulates analyzing captions/comments from a real social media post.
+"""
+)
+
+if st.button("Load Instagram Demo Example"):
+    st.session_state["demo_text"] = (
+        "URGENT announcement! Limited time offer — verify your account now "
+        "or it will be permanently closed. Send confirmation immediately."
     )
-    locale = st.selectbox("Locale", ["en"], index=0)
-    show_debug = st.toggle("Show debug / explainability", value=False)
+
+st.divider()
 
 # -----------------------------
-# Demo examples
+# Other demo buttons
 # -----------------------------
-st.subheader("Try demo social media posts")
-d1, d2, d3, d4 = st.columns(4)
+st.subheader("Quick Demo Examples")
 
-if d1.button("🚨 Scam"):
+c1, c2, c3 = st.columns(3)
+
+if c1.button("🚨 Scam Post"):
     st.session_state["demo_text"] = (
-        "URGENT: Your bank account will be closed today! Verify immediately and "
-        "send a $200 gift card to restore access."
+        "Your account will be closed today! Send a gift card immediately."
     )
-if d2.button("⚠️ Sexual"):
+
+if c2.button("🔞 Sexual Content"):
     st.session_state["demo_text"] = (
-        "Hey 😉 DM me for private pics and exclusive content tonight."
+        "DM me for private pics and exclusive content tonight 😉"
     )
-if d3.button("🧒 Child safety"):
+
+if c3.button("🧒 Child Safety Risk"):
     st.session_state["demo_text"] = (
-        "I'm 16 and an older guy keeps asking me to meet privately."
-    )
-if d4.button("✅ Safe"):
-    st.session_state["demo_text"] = (
-        "Just finished a great workout and enjoyed coffee with friends!"
+        "I'm 16 and someone older keeps asking me to meet privately."
     )
 
 default_text = st.session_state.get("demo_text", "")
 
 # -----------------------------
-# Input
+# Input area
 # -----------------------------
 text = st.text_area(
     "Paste a social media post:",
     value=default_text,
     height=180,
-    placeholder="Type your text here or click a demo example above...",
+    placeholder="Paste caption, comment, or message here...",
 )
 
-colA, colB = st.columns([1, 2])
-with colA:
-    analyze = st.button("Analyze", type="primary")
-with colB:
-    st.caption("Tip: Use the demo buttons above to quickly test the system.")
+show_debug = st.toggle("Show debug info")
 
 # -----------------------------
-# Run analysis
+# Analyze button
 # -----------------------------
-if analyze:
+if st.button("Analyze", type="primary"):
+
     if not text.strip():
-        st.warning("Please enter some text to analyze.")
+        st.warning("Please enter text.")
         st.stop()
 
-    with st.spinner("Analyzing..."):
-        result = run_pipeline(text, locale)
+    result = run_pipeline(text)
 
     st.divider()
+    st.subheader("📊 Analysis Result")
+
+    score = result["overall_severity"]
+    safe = result["safe_to_show"]
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Safe to show", "✅ Yes" if safe else "⚠️ No")
+    col2.metric("Severity Score", f"{score:.2f}")
+
+    level = (
+        "Critical" if score >= 0.8 else
+        "High" if score >= 0.6 else
+        "Medium" if score >= 0.35 else
+        "Low"
+    )
+
+    col3.metric("Risk Level", level)
+
+    st.progress(score)
 
     # -----------------------------
-    # Summary
+    # Warnings
     # -----------------------------
-    st.subheader("Summary")
+    st.subheader("⚠️ Trigger Warnings")
 
-    score = float(result.get("overall_severity", 0.0))
-    safe = bool(result.get("safe_to_show", True))
-
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Safe to show", "✅ Yes" if safe else "⚠️ No")
-    s2.metric("Severity", f"{score:.2f}")
-    s3.metric("Risk level", severity_label(score))
-
-    st.progress(min(max(score, 0.0), 1.0))
-
-    # -----------------------------
-    # Trigger warnings
-    # -----------------------------
-    st.subheader("Trigger warnings")
-    tw = result.get("trigger_warnings", [])
-    if tw:
-        for w in tw:
+    if result["trigger_warnings"]:
+        for w in result["trigger_warnings"]:
             st.warning(w)
     else:
-        st.success("No trigger warnings detected.")
+        st.success("No warnings detected.")
 
     # -----------------------------
-    # Category badges
+    # Findings
     # -----------------------------
-    findings = result.get("findings", [])
-    st.subheader("Detected categories")
+    st.subheader("🔎 Detailed Findings")
 
-    if findings:
-        cats = sorted({f.get("category", "unknown") for f in findings})
-        st.write(" ".join([f"`{badge_for_category(c)}`" for c in cats]))
-    else:
-        st.write("No categories flagged.")
-
-    # -----------------------------
-    # Detailed findings (explainability)
-    # -----------------------------
-    st.subheader("Detailed findings")
-    if findings:
-        for f in findings:
-            cat = f.get("category", "unknown")
-            sev = float(f.get("severity", 0.0))
-            reasons = f.get("reasons", [])
-            with st.expander(f"{badge_for_category(cat)} — severity {sev:.2f}", expanded=True):
-                st.write(f"**Reasons:** `{', '.join(reasons) if reasons else 'n/a'}`")
-                st.write(
-                    "This category was flagged by rule-based heuristics designed to detect common patterns."
-                )
-    else:
-        st.write("No findings.")
+    for f in result["findings"]:
+        with st.expander(f"{f['category']} — severity {f['severity']:.2f}"):
+            st.write("Reasons:", ", ".join(f["reasons"]))
 
     # -----------------------------
     # Debug panel
     # -----------------------------
     if show_debug:
-        st.subheader("Debug / explainability")
+        st.subheader("Debug Output")
         st.json(result)
 
 st.divider()
-st.caption("SentinelAI • Content Safety Analyzer • Streamlit portfolio demo")
+st.caption("SentinelAI • AI Content Moderation Portfolio Project")
