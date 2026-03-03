@@ -1,7 +1,7 @@
+streamlit
 fastapi
 uvicorn
 pydantic>=2
-streamlit
 requests
 transformers
-torch
+torch --index-url https://download.pytorch.org/whl/cpu
