@@ -1,49 +1,88 @@
-from typing import List
-from app.pipeline.schemas import Finding, ModerateResponse
-from app.pipeline.rules import run_rule_checks
-from app.pipeline.heuristics import scam_heuristic_score, child_safety_score, sexual_score
-from app.pipeline.models import model_moderation
+from typing import Any, Dict, List
 
-def run_pipeline(text: str, locale: str = "en") -> ModerateResponse:
-    rule_hits = run_rule_checks(text)
-    model_scores = model_moderation(text, locale)
 
-    findings: List[Finding] = []
+def run_pipeline(text: str, locale: str = "en") -> Dict[str, Any]:
+    """
+    Simple hybrid-style moderation pipeline (rules + scoring).
+    Streamlit-friendly (returns plain dicts).
+    """
+    findings: List[Dict[str, Any]] = []
+    warnings: List[str] = []
 
-    scam_score = scam_heuristic_score(rule_hits["scam"])
+    t = (text or "").lower().strip()
+
+    # -----------------------------
+    # Scam / fraud signals (rules)
+    # -----------------------------
+    scam_score = 0.0
+    scam_reasons: List[str] = []
+    if "gift card" in t or "steam card" in t or "itunes card" in t:
+        scam_score = max(scam_score, 0.75)
+        scam_reasons.append("gift_card_payment")
+    if "verify your account" in t or "account will be closed" in t or "account closed" in t:
+        scam_score = max(scam_score, 0.60)
+        scam_reasons.append("account_threat_or_impersonation")
+    if "urgent" in t or "act now" in t or "limited time" in t:
+        scam_score = max(scam_score, 0.40)
+        scam_reasons.append("urgency_pressure")
+
     if scam_score > 0:
-        findings.append(Finding(category="scam_fraud", severity=scam_score, reasons=rule_hits["scam"]))
+        findings.append(
+            {"category": "scam_fraud", "severity": scam_score, "reasons": scam_reasons}
+        )
+        warnings.append("Possible scam/fraud — avoid payments, suspicious links, or sharing personal info.")
 
-    child_score = child_safety_score(rule_hits["child_safety"])
-    if child_score > 0:
-        findings.append(Finding(category="child_safety", severity=child_score, reasons=rule_hits["child_safety"]))
+    # -----------------------------------
+    # Sexual content / solicitation (rules)
+    # -----------------------------------
+    sex_score = 0.0
+    sex_reasons: List[str] = []
+    sexual_phrases = ["send nudes", "dm for nudes", "hook up", "hookup", "sex now"]
+    if any(p in t for p in sexual_phrases):
+        sex_score = max(sex_score, 0.70)
+        sex_reasons.append("explicit_or_solicitation_phrase")
 
-    sex_score = sexual_score(rule_hits["sexual"])
     if sex_score > 0:
-        findings.append(Finding(category="sexual_content", severity=sex_score, reasons=rule_hits["sexual"]))
+        findings.append(
+            {"category": "sexual_content", "severity": sex_score, "reasons": sex_reasons}
+        )
+        warnings.append("Sexual content — may include explicit or suggestive language.")
 
-    hate_score = max(model_scores.get("hate", 0.0), model_scores.get("harassment", 0.0))
-    if hate_score > 0:
-        findings.append(Finding(category="hate_harassment", severity=hate_score, reasons=["local_model_signal"]))
+    # -----------------------------
+    # Child safety risk (rules)
+    # -----------------------------
+    child_score = 0.0
+    child_reasons: List[str] = []
+    minor_markers = ["i'm 16", "i am 16", "i'm 17", "i am 17", "under 18", "minor"]
+    if any(m in t for m in minor_markers):
+        child_score = max(child_score, 0.85)
+        child_reasons.append("minor_mentioned")
+    if "older men" in t or "older women" in t or "age gap" in t:
+        child_score = max(child_score, 0.60)
+        child_reasons.append("adult_minor_context")
 
-    overall = 0.0 if not findings else max(f.severity for f in findings)
+    if child_score > 0:
+        findings.append(
+            {"category": "child_safety", "severity": child_score, "reasons": child_reasons}
+        )
+        warnings.append("Child safety risk — may involve minors, grooming, or exploitation.")
 
-    trigger_warnings = []
-    if any(f.category == "child_safety" and f.severity >= 0.4 for f in findings):
-        trigger_warnings.append("Child safety risk — may involve minors, grooming, or exploitation.")
-    if any(f.category == "sexual_content" and f.severity >= 0.4 for f in findings):
-        trigger_warnings.append("Sexual content — may be explicit, suggestive, or solicitation.")
-    if any(f.category == "hate_harassment" and f.severity >= 0.4 for f in findings):
-        trigger_warnings.append("Hate/harassment — may include hateful or abusive language.")
-    if any(f.category == "scam_fraud" and f.severity >= 0.4 for f in findings):
-        trigger_warnings.append("Possible scam/fraud — be cautious with links, payments, and personal info.")
+    # -----------------------------
+    # Overall decision
+    # -----------------------------
+    overall = max([f["severity"] for f in findings], default=0.0)
 
-    safe_to_show = not (overall >= 0.7 or any(f.category == "child_safety" and f.severity >= 0.6 for f in findings))
+    # Block if very high severity OR child-safety is high
+    safe_to_show = True
+    if overall >= 0.70:
+        safe_to_show = False
+    if any(f["category"] == "child_safety" and f["severity"] >= 0.60 for f in findings):
+        safe_to_show = False
 
-    return ModerateResponse(
-        safe_to_show=safe_to_show,
-        overall_severity=overall,
-        findings=findings,
-        trigger_warnings=trigger_warnings,
-        debug={"rule_hits": rule_hits, "model_scores": model_scores},
-    )
+    return {
+        "safe_to_show": safe_to_show,
+        "overall_severity": float(overall),
+        "trigger_warnings": warnings,
+        "findings": findings,
+        "debug": {"locale": locale},
+    }
