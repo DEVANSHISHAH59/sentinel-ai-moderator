@@ -10,9 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 from app.pipeline.policy import run_pipeline  # noqa
 
-# -----------------------------
-# Helpers
-# -----------------------------
+
 def risk_level(score: float) -> str:
     if score >= 0.80:
         return "Critical"
@@ -24,6 +22,7 @@ def risk_level(score: float) -> str:
         return "Low"
     return "None"
 
+
 def badge(cat: str) -> str:
     m = {
         "scam_fraud": "💸 Scam/Fraud",
@@ -33,12 +32,16 @@ def badge(cat: str) -> str:
     }
     return m.get(cat, cat)
 
-def summarize_categories(findings):
-    cats = sorted({f.get("category", "unknown") for f in findings})
+
+def categories_line(findings) -> str:
+    if not findings:
+        return "—"
+    cats = sorted({(f or {}).get("category", "unknown") for f in findings})
     return " · ".join([badge(c) for c in cats]) if cats else "—"
 
+
 # -----------------------------
-# Page setup
+# Page setup (Recruiter-friendly)
 # -----------------------------
 st.set_page_config(
     page_title="SentinelAI — Content Safety Analyzer",
@@ -48,36 +51,18 @@ st.set_page_config(
 
 st.title("🛡️ SentinelAI — Content Safety Analyzer")
 st.caption(
-    "Recruiter demo: a content moderation pipeline that flags risky social media text and produces trigger warnings."
+    
 )
 
-# -----------------------------
-# Sidebar controls
-# -----------------------------
-with st.sidebar:
-    st.header("Modes")
-    mode = st.radio("Choose a mode", ["Single Post Analyzer", "Live Feed Mode"], index=1)
-
-    st.divider()
-    st.header("Settings")
-    locale = st.selectbox("Locale", ["en"], index=0)
-    show_debug = st.toggle("Show debug / raw output", value=False)
-
-    if mode == "Live Feed Mode":
-        auto_refresh = st.toggle("Auto-refresh feed", value=False)
-        refresh_seconds = st.slider("Refresh every (seconds)", 3, 15, 6)
-
-# -----------------------------
-# Demo data (safe + risky)
-# -----------------------------
 INSTAGRAM_LINK = "https://www.instagram.com/reel/DVaFCuqDQEx/?igsh=cXphdTg5aTRlcDZm"
 
+# Demo feed data (no scraping; simulated captions/comments)
 FEED_POSTS = [
     {
-        "id": "ig1",
+        "id": "ig_demo",
         "source": "Instagram Reel",
         "link": INSTAGRAM_LINK,
-        "text": "Demo: recruiter can open the reel link above. (This app analyzes text you paste or simulated captions.)",
+        "text": "Demo link included. Open the reel and paste any caption/comment text here to analyze.",
     },
     {
         "id": "p1",
@@ -112,41 +97,58 @@ FEED_POSTS = [
 ]
 
 # -----------------------------
+# Sidebar controls
+# -----------------------------
+with st.sidebar:
+    st.header("Demo mode")
+    mode = st.radio("Choose a mode", ["Live Feed Mode", "Single Post Analyzer"], index=0)
+
+    st.divider()
+    st.header("Options")
+    locale = st.selectbox("Locale", ["en"], index=0)
+    show_debug = st.toggle("Show debug output", value=False)
+
+    auto_refresh = False
+    refresh_seconds = 6
+    if mode == "Live Feed Mode":
+        auto_refresh = st.toggle("Auto-refresh feed", value=False)
+        refresh_seconds = st.slider("Refresh every (seconds)", 3, 15, 6)
+
+# -----------------------------
 # SINGLE POST ANALYZER
 # -----------------------------
 if mode == "Single Post Analyzer":
     st.subheader("Single Post Analyzer")
+    st.markdown(f"🔗 Demo Instagram Reel: [Open link]({INSTAGRAM_LINK})")
 
-    demo_col1, demo_col2, demo_col3, demo_col4 = st.columns(4)
-    if demo_col1.button("🚨 Scam"):
+    d1, d2, d3, d4 = st.columns(4)
+    if d1.button("🚨 Scam"):
         st.session_state["single_text"] = FEED_POSTS[1]["text"]
-    if demo_col2.button("🔞 Sexual"):
+    if d2.button("🔞 Sexual"):
         st.session_state["single_text"] = FEED_POSTS[2]["text"]
-    if demo_col3.button("🧒 Child safety"):
+    if d3.button("🧒 Child safety"):
         st.session_state["single_text"] = FEED_POSTS[3]["text"]
-    if demo_col4.button("✅ Safe"):
+    if d4.button("✅ Safe"):
         st.session_state["single_text"] = FEED_POSTS[4]["text"]
-
-    st.markdown(f"🔗 Optional demo reel: [Open Instagram Reel]({INSTAGRAM_LINK})")
 
     text = st.text_area(
         "Paste a social media post:",
         value=st.session_state.get("single_text", ""),
-        height=180,
-        placeholder="Paste caption/comment/message here..."
+        height=200,
+        placeholder="Paste caption/comment/message here...",
     )
 
     if st.button("Analyze", type="primary"):
         if not text.strip():
-            st.warning("Please enter text.")
+            st.warning("Please enter some text.")
             st.stop()
 
         result = run_pipeline(text, locale)
+
+        score = float(result.get("overall_severity", 0.0))
+        safe = bool(result.get("safe_to_show", True))
+
         st.divider()
-
-        score = float(result["overall_severity"])
-        safe = bool(result["safe_to_show"])
-
         c1, c2, c3 = st.columns(3)
         c1.metric("Safe to show", "✅ Yes" if safe else "⚠️ No")
         c2.metric("Severity", f"{score:.2f}")
@@ -154,38 +156,38 @@ if mode == "Single Post Analyzer":
         st.progress(min(max(score, 0.0), 1.0))
 
         st.subheader("Trigger warnings")
-        if result["trigger_warnings"]:
-            for w in result["trigger_warnings"]:
-                st.warning(w)
-        else:
+        for w in (result.get("trigger_warnings") or []):
+            st.warning(w)
+        if not (result.get("trigger_warnings") or []):
             st.success("No trigger warnings detected.")
 
         st.subheader("Findings")
-        if result["findings"]:
-            for f in result["findings"]:
-                with st.expander(f"{badge(f['category'])} — severity {f['severity']:.2f}", expanded=True):
-                    st.write("Reasons:", ", ".join(f.get("reasons", [])) or "—")
+        findings = result.get("findings") or []
+        if findings:
+            for f in findings:
+                cat = (f or {}).get("category", "unknown")
+                sev = float((f or {}).get("severity", 0.0))
+                reasons = (f or {}).get("reasons", [])
+                with st.expander(f"{badge(cat)} — severity {sev:.2f}", expanded=True):
+                    st.write("Reasons:", ", ".join(reasons) if reasons else "—")
         else:
             st.write("No findings.")
 
         if show_debug:
-            st.subheader("Debug output")
+            st.subheader("Debug")
             st.json(result)
 
 # -----------------------------
-# LIVE FEED MODE (Recruiter dashboard)
+# LIVE FEED MODE
 # -----------------------------
 else:
     st.subheader("Live Feed Mode — Moderation Dashboard")
     st.write(
-        "This simulates a Trust & Safety moderation view: a feed of posts is analyzed and labeled with severity, "
-        "categories, and trigger warnings."
+        "This simulates a Trust & Safety moderation dashboard: a feed of posts is analyzed and labeled with "
+        "severity, categories, and trigger warnings."
     )
-    st.markdown(f"🔗 Demo reel link included in feed: [Open Instagram Reel]({INSTAGRAM_LINK})")
+    st.markdown(f"🔗 Instagram reel included in feed: [Open link]({INSTAGRAM_LINK})")
 
-    left, right = st.columns([2, 1], gap="large")
-
-    # Auto refresh option
     if "feed_tick" not in st.session_state:
         st.session_state["feed_tick"] = 0
 
@@ -194,34 +196,35 @@ else:
         st.session_state["feed_tick"] += 1
         st.rerun()
 
+    left, right = st.columns([2, 1], gap="large")
+
     with left:
         st.caption("Feed")
         for post in FEED_POSTS:
-            # Analyze each post (skip the IG link item if it has no meaningful text)
-            analysis_text = post["text"]
-            result = run_pipeline(analysis_text, locale)
-            score = float(result["overall_severity"])
-            safe = bool(result["safe_to_show"])
-            cats = summarize_categories(result.get("findings", []))
+            result = run_pipeline(post.get("text", ""), locale)
+
+            score = float(result.get("overall_severity", 0.0))
+            safe = bool(result.get("safe_to_show", True))
+            findings = result.get("findings") or []
 
             status = "✅ SAFE" if safe else "⛔ BLOCK"
             level = risk_level(score)
+            cats = categories_line(findings)
 
             with st.container(border=True):
                 top = st.columns([2, 1, 1])
-                top[0].markdown(f"**{post['source']}**")
+                top[0].markdown(f"**{post.get('source','Post')}**")
                 top[1].markdown(f"**{status}**")
                 top[2].markdown(f"**{level}**")
 
                 st.progress(min(max(score, 0.0), 1.0))
-                st.write(post["text"])
+                st.write(post.get("text", ""))
                 st.caption(f"Categories: {cats}")
 
-                if post["link"]:
+                if post.get("link"):
                     st.markdown(f"🔗 Link: [Open post]({post['link']})")
 
-                # Select post for detail view
-                if st.button(f"Inspect details → {post['id']}", key=f"inspect_{post['id']}"):
+                if st.button(f"Inspect → {post['id']}", key=f"inspect_{post['id']}"):
                     st.session_state["selected_post"] = post
                     st.session_state["selected_result"] = result
 
@@ -231,37 +234,43 @@ else:
         selected_result = st.session_state.get("selected_result")
 
         if not selected:
-            st.info("Click **Inspect details** on any post to view full warnings and reasons.")
+            st.info("Click **Inspect** on any post to view full trigger warnings and reasons.")
         else:
-            st.markdown(f"### {selected['source']} — Details")
+            st.markdown(f"### {selected.get('source','Post')} — Details")
             if selected.get("link"):
                 st.markdown(f"🔗 [Open post]({selected['link']})")
 
-            score = float(selected_result["overall_severity"])
-            safe = bool(selected_result["safe_to_show"])
+            score = float((selected_result or {}).get("overall_severity", 0.0))
+            safe = bool((selected_result or {}).get("safe_to_show", True))
+            findings = (selected_result or {}).get("findings") or []
 
             st.metric("Safe to show", "✅ Yes" if safe else "⚠️ No")
             st.metric("Severity", f"{score:.2f}")
+            st.metric("Risk level", risk_level(score))
             st.progress(min(max(score, 0.0), 1.0))
 
             st.subheader("Trigger warnings")
-            if selected_result["trigger_warnings"]:
-                for w in selected_result["trigger_warnings"]:
+            tw = (selected_result or {}).get("trigger_warnings") or []
+            if tw:
+                for w in tw:
                     st.warning(w)
             else:
                 st.success("No trigger warnings detected.")
 
             st.subheader("Findings")
-            if selected_result["findings"]:
-                for f in selected_result["findings"]:
-                    with st.expander(f"{badge(f['category'])} — {f['severity']:.2f}", expanded=True):
-                        st.write("Reasons:", ", ".join(f.get("reasons", [])) or "—")
+            if findings:
+                for f in findings:
+                    cat = (f or {}).get("category", "unknown")
+                    sev = float((f or {}).get("severity", 0.0))
+                    reasons = (f or {}).get("reasons", [])
+                    with st.expander(f"{badge(cat)} — {sev:.2f}", expanded=True):
+                        st.write("Reasons:", ", ".join(reasons) if reasons else "—")
             else:
                 st.write("No findings.")
 
             if show_debug:
-                st.subheader("Debug output")
-                st.json(selected_result)
+                st.subheader("Debug")
+                st.json(selected_result or {})
 
 st.divider()
-st.caption("SentinelAI • Live moderation dashboard demo • Streamlit portfolio app")
+st.caption("SentinelAI • Live moderation dashboard demo • Streamlit portfolio project")
