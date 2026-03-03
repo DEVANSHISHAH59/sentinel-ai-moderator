@@ -1,7 +1,4 @@
 streamlit
-fastapi
-uvicorn
 pydantic>=2
-requests
 transformers
 torch --index-url https://download.pytorch.org/whl/cpu
