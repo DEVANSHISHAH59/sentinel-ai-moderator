@@ -72,3 +72,12 @@ Text processing
 Live Demo
 
 https://sentinel-ai-moderator-dqtmurpww6ta8kcrgs6kat.streamlit.app/
+Future Improvements
+
+larger moderation dataset
+
+improved policy classification
+
+batch content analysis
+
+model evaluation metrics
